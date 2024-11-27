@@ -6,9 +6,7 @@ import { InputSystem } from './io/InputSystem';
 import { View3D } from './core/View3D';
 import { version } from '../package.json';
 
-import { GPUTextureFormat } from './gfx/graphics/webGpu/WebGPUConst';
 import { webGPUContext } from './gfx/graphics/webGpu/Context3D';
-import { RTResourceConfig } from './gfx/renderJob/config/RTResourceConfig';
 import { RTResourceMap } from './gfx/renderJob/frame/RTResourceMap';
 
 import { ForwardRenderJob } from './gfx/renderJob/jobs/ForwardRenderJob';
@@ -20,7 +18,6 @@ import { ShaderLib } from './assets/shader/ShaderLib';
 import { ShaderUtil } from './gfx/graphics/webGpu/shader/util/ShaderUtil';
 import { ComponentCollect } from './gfx/renderJob/collect/ComponentCollect';
 import { ShadowLightsCollect } from './gfx/renderJob/collect/ShadowLightsCollect';
-import { GUIConfig } from './components/gui/GUIConfig';
 import { WasmMatrix } from '@orillusion/wasm-matrix/WasmMatrix';
 import { Matrix4 } from './math/Matrix4';
 import { FXAAPost } from './gfx/renderJob/post/FXAAPost';
@@ -46,11 +43,6 @@ export class Engine3D {
      * input system in engine3d
      */
     public static inputSystem: InputSystem;
-
-    /**
-    * input system in engine3d
-    */
-    public static divB: HTMLDivElement;
 
     /**
      * more view in engine3d
@@ -114,6 +106,8 @@ export class Engine3D {
      * engine setting
      */
     public static setting: EngineSetting = {
+        doublePrecision: false,
+        
         occlusionQuery: {
             enable: true,
             debug: false,
@@ -324,20 +318,13 @@ export class Engine3D {
      */
     public static async init(descriptor: { canvasConfig?: CanvasConfig; beforeRender?: Function; renderLoop?: Function; lateRender?: Function, engineSetting?: EngineSetting } = {}) {
         console.log('Engine Version', version);
-
-        // for dev debug
-        if (import.meta.env.DEV) {
-            this.divB = document.createElement("div");
-            this.divB.style.position = 'absolute'
-            this.divB.style.zIndex = '999'
-            this.divB.style.color = '#FFFFFF'
-            this.divB.style.top = '150px'
-            document.body.appendChild(this.divB);
+        if (!window.isSecureContext){
+            console.warn('WebGPU is only supported in secure contexts (HTTPS or localhost)')
         }
 
         this.setting = { ...this.setting, ...descriptor.engineSetting }
 
-        await WasmMatrix.init(Matrix4.allocCount);
+        await WasmMatrix.init(Matrix4.allocCount, this.setting.doublePrecision);
 
         await webGPUContext.init(descriptor.canvasConfig);
 
@@ -440,7 +427,8 @@ export class Engine3D {
      * Resume the engine render
      */
     public static resume() {
-        this._requestAnimationFrameID = requestAnimationFrame((t) => this.render(t));
+        if(this._requestAnimationFrameID === 0)
+            this._requestAnimationFrameID = requestAnimationFrame((t) => this.render(t));
     }
 
     /**
@@ -450,20 +438,20 @@ export class Engine3D {
     private static async render(time: number) {
         if (this._frameRateValue > 0) {
             let delta = time - this._time;
-            while(delta < this._frameRateValue){
+            if(delta < this._frameRateValue){
                 let t = performance.now()
-                await Promise.resolve().then(()=>{
-                    time += (performance.now() - t)
-                    delta = time - this._time
+                await new Promise(res=>{
+                    setTimeout(()=>{
+                        time += (performance.now() - t)
+                        res(true)
+                    }, this._frameRateValue - delta)  
                 })
             }
             this._time = time;
-            await this.updateFrame(time);
-        } else {
-            await this.updateFrame(time);
         }
+        await this.updateFrame(time);
+        this._requestAnimationFrameID = 0;
         this.resume()
-
     }
 
     private static async updateFrame(time: number) {
